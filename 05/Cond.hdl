@@ -1,0 +1,22 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/02/Or16Way.hdl
+
+/**
+ * Conditional logic
+ */
+
+CHIP Cond {
+    IN j[3], zr, ng;
+    OUT out;
+
+    PARTS:
+    And(a=j[2], b=ng, out=jl);
+    And(a=j[1], b=zr, out=jz);
+    Or(a=ng, b=zr, out=le);
+    Not(in=le, out=g);
+    And(a=j[0], b=g, out=jg);
+    Or(a=jl, b=jz, out=j1);
+    Or(a=j1, b=jg, out=out);
+}
