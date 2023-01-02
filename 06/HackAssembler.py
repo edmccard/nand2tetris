@@ -1,5 +1,7 @@
 import re
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
 
 @dataclass
@@ -189,11 +191,14 @@ def main():
     symbols = {'SP': 0, 'LCL': 1, 'ARG': 2, 'THIS': 3, 'THAT': 4,
                **SYMBOLS}
 
-    try:
-        with open(hack, 'w') as f:
-            f.writelines('\n'.join(assemble(Parser(asm), symbols)))
-    except Exception as e:
-        return str(e)
+    with tempfile.NamedTemporaryFile(mode='wt', dir=os.getcwd()) as f:
+        try:
+            f.writelines(l + '\n' for l in assemble(Parser(asm), symbols))
+        except Exception as err:
+            return str(err)
+        f._closer.delete = False
+        f.close()
+        os.rename(f.name, hack)
         
 if __name__ == '__main__':
     sys.exit(main())
