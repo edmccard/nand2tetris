@@ -233,14 +233,14 @@ def main():
     else:
         return usage
 
-    with tempfile.NamedTemporaryFile(mode='wt', dir=os.getcwd()) as of:
+    with tempfile.NamedTemporaryFile(mode='wt', dir=os.getcwd(), delete=False) as of:
         with open(vm) as f:
             p = Parser.parse(module, f.readlines())
         try:
             of.writelines(Translator.translate(module, p))
         except Exception as err:
+            os.remove(of.name)
             return str(err)
-        of._closer.delete = False
         of.close()
         os.rename(of.name, asm)
 

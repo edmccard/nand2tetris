@@ -191,12 +191,12 @@ def main():
     symbols = {'SP': 0, 'LCL': 1, 'ARG': 2, 'THIS': 3, 'THAT': 4,
                **SYMBOLS}
 
-    with tempfile.NamedTemporaryFile(mode='wt', dir=os.getcwd()) as f:
+    with tempfile.NamedTemporaryFile(mode='wt', dir=os.getcwd(), delete=False) as f:
         try:
             f.writelines(l + '\n' for l in assemble(Parser(asm), symbols))
         except Exception as err:
+            os.remove(f.name)
             return str(err)
-        f._closer.delete = False
         f.close()
         os.rename(f.name, hack)
         
