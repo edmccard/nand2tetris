@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -239,10 +240,11 @@ def main():
         try:
             of.writelines(Translator.translate(module, p))
         except Exception as err:
+            of.close()
             os.remove(of.name)
             return str(err)
         of.close()
-        os.rename(of.name, asm)
+        shutil.move(of.name, asm)
 
 if __name__ == '__main__':
     sys.exit(main())

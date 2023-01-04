@@ -1,5 +1,6 @@
 import re
 import os
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -195,10 +196,11 @@ def main():
         try:
             f.writelines(l + '\n' for l in assemble(Parser(asm), symbols))
         except Exception as err:
+            f.close()
             os.remove(f.name)
             return str(err)
         f.close()
-        os.rename(f.name, hack)
+        shutil.move(f.name, hack)
         
 if __name__ == '__main__':
     sys.exit(main())
