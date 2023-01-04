@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -50,6 +51,15 @@ class Branch:
     op: str
     symbol: str
 
+@dataclass
+class Function:
+    name: str
+    nArgs: int
+
+@dataclass
+class Return:
+    pass
+
 class Parser:
     label = re.compile(r'[a-zA-Z.$:][\w.$:]*')
 
@@ -67,43 +77,36 @@ class Parser:
             op, args = line[0], line[1:]
             match op:
                 case 'push' | 'pop':
-                    if len(args) != 2:
-                        inst = Error(f'{op} takes 2 arguments')
-                    else:   
-                        inst = self.stack(op, args)
+                    inst = self.stack(op, args)
                 case 'neg' | 'not':
-                    if args:
-                        inst = Error(f'{op} takes no arguments')
-                    else:
-                        inst = UnaryOp(op)
+                    inst = self.unaryOp(op, args)
                 case 'add' | 'sub' | 'and' | 'or':
-                    if args:
-                        inst = Error(f'{op} takes no arguments')
-                    else:
-                        inst = BinaryOp(op)
+                    inst = self.binaryOp(op, args)
                 case 'eq' | 'lt' | 'gt':
-                    if args:
-                        inst = Error(f'{op} takes no arguments')
-                    else:
-                        inst = CompOp(op)
+                    inst = self.compOp(op, args)
                 case 'label' | 'goto' | 'if-goto':
-                    if len(args) != 1:
-                        inst = Error(f'{op} takes 1 argument')
-                    elif not re.fullmatch(Parser.label, args[0]):
-                        inst = Error('invalid label')
-                    else:
-                        inst = Branch(op, args[0])
+                    inst = self.branch(op, args)
+                case 'function' | 'call':
+                    inst = self.function(op, args)
+                case 'return':
+                    inst = self.ret(args)
             match inst:
                 case Error(msg):
                     yield Error(f'{filename} line {lineno+1}: {msg}')
                 case _:
                     yield inst                                    
 
-    def stack(self, op, args):
+    @staticmethod
+    def getInt(s):
         try:
-            idx = int(args[1])
+            return int(s)
         except ValueError:
-            idx = -1
+            return -1
+
+    def stack(self, op, args):
+        if len(args) != 2:
+            return Error(f'{op} takes 2 arguments')
+        idx = Parser.getInt(args[1])
         if idx < 0:
             return Error('index must be a non-negative integer')
 
@@ -136,6 +139,42 @@ class Parser:
         else:
             return Pop(seg, str(idx))
 
+    def unaryOp(self, op, args):
+        if args:
+            return Error(f'{op} takes no arguments')
+        return UnaryOp(op)
+
+    def binaryOp(self, op, args):
+        if args:
+            return Error(f'{op} takes no arguments')
+        return BinaryOp(op)
+
+    def compOp(self, op, args):
+        if args:
+            return Error(f'{op} takes no arguments')
+        return CompOp(op)
+
+    def branch(self, op, args):
+        if len(args) != 1:
+            return Error(f'{op} takes 1 argument')
+        if not re.fullmatch(Parser.label, args[0]):
+            return Error('invalid label')
+        return Branch(op, args[0])
+    
+    def function(self, op, args):
+        if len(args) != 2:
+            return Error(f'{op} takes two arguments')
+        if nArgs := Parser.getInt(args[1]) < 0:
+            return Error('nArgs must be a non-negative integer')
+        if not re.fullmatch(Parser.label, args[0]):
+            return Error('invalid function name')
+        return Function(op, args[0], nArgs)
+
+    def ret(self, args):
+        if args:
+            return Error('return takes no arguments')
+        return Return()
+
 class Translator:
     ops = {'add': '+', 'sub': '-', 'and': '&', 'or': '|',
            'neg': '-', 'not': '!',
@@ -145,6 +184,7 @@ class Translator:
         self.cmds = parser.parse()
         self.module = parser.module
         self.next_cmp = 0
+        self.next_ret = 0
         self.funcname = None
     
     def translate(self):
@@ -168,6 +208,12 @@ class Translator:
                     yield self.goto(symbol)
                 case Branch('if-goto', symbol):
                     yield self.ifGoto(symbol)
+                case Function('function', name, nArgs):
+                    yield self.function(name, nArgs)
+                case Function('call', name, nArgs):
+                    yield self.call(name, nArgs)
+                case Return():
+                    yield self.ret()
 
     def push(self, seg, idx):
         match seg:
@@ -196,27 +242,25 @@ class Translator:
                         f'@{idx}  \n'
                          'D=D+A   \n'
                          '@SP     \n'
-                         'M=M-1   \n'
-                         'A=M     \n'
+                         'AM=M-1   \n'
                          'D=D+M   \n'
                          'A=D-M   \n'
                          'M=D-A   \n')
             case Fixed():
                 return (f'@SP     \n'
-                         'M=M-1   \n'
-                         'A=M     \n'
+                         'AM=M-1  \n'
                          'D=M     \n'
                         f'@{idx}  \n'
                          'M=D     \n')
 
     def unaryOp(self, op):
-        op = Translator.ops[op]
+        op = Translator.OPS[op]
         return (f'@SP     \n'
                  'A=M-1   \n'
                 f'M={op}M \n')
 
     def binaryOp(self, op):
-        op = Translator.ops[op]
+        op = Translator.OPS[op]
         if op == '-':
             action = 'M=M-D     \n'
         else:
@@ -262,6 +306,72 @@ class Translator:
                 f'@{label} \n'
                  'D;JNE    \n')
 
+    def function(self, name, nArgs):
+        self.funcname = name
+        self.next_ret = 0
+        label = f'{self.module}.{self.funcname}'
+        insts = f'({label}) \n'
+        if nArgs > 0:
+            insts = ''.join(insts,
+                            '@SP  \n',
+                            'A=M  \n',
+                            'M=0\nA=A+1\n' * nArgs,
+                            'D=A  \n',
+                            '@SP  \n',
+                            'M=D  \n')
+        return insts
+
+    def call(self, name, nArgs):
+        self.next_ret = self.next_ret + 1
+        ret = self.makeLabel(f'ret.{self.next_ret}')
+        f'''
+        @{ret}
+        D=A
+        @SP
+        M=M+1
+        A=M-1
+        M=D
+        @LCL
+        D=M
+        @SP
+        M=M+1
+        A=M-1
+        M=D
+        @ARG
+        D=M
+        @SP
+        M=M+1
+        A=M-1
+        M=D
+        @THIS
+        D=M
+        @SP
+        M=M+1
+        A=M-1
+        M=D
+        @THAT
+        D=M
+        @SP
+        M=M+1
+        A=M-1
+        M=D
+        D=A
+        @{4+nArgs}
+        D=D-A
+        @ARG
+        M=D
+        @SP
+        D=M
+        @LCL
+        M=D
+        @{name}
+        0;JMP
+        ({ret})
+        '''
+
+    def ret(self):
+        pass
+
 def main():
     usage = f'usage: {sys.argv[0]} input_file.vm'
     args = sys.argv[1:]
@@ -281,10 +391,11 @@ def main():
         try:
             of.writelines(t.translate())
         except Exception as err:
+            of.close()
             os.remove(of.name)
             return str(err)
         of.close()
-        os.rename(of.name, asm)
+        shutil.move(of.name, asm)
 
 if __name__ == '__main__':
     sys.exit(main())
