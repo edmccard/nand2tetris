@@ -53,6 +53,7 @@ class Branch:
 
 @dataclass
 class Function:
+    op: str
     name: str
     nArgs: int
 
@@ -164,7 +165,7 @@ class Parser:
     def function(self, op, args):
         if len(args) != 2:
             return Error(f'{op} takes two arguments')
-        if nArgs := Parser.getInt(args[1]) < 0:
+        if (nArgs := Parser.getInt(args[1])) < 0:
             return Error('nArgs must be a non-negative integer')
         if not re.fullmatch(Parser.label, args[0]):
             return Error('invalid function name')
@@ -176,6 +177,13 @@ class Parser:
         return Return()
 
 class Translator:
+    bootstrap = ('@261      \n' # to satisfy test scripts
+                 'D=A       \n'
+                 '@SP       \n'
+                 'M=D       \n'
+                 '@Sys.init \n'
+                 '0;JMP     \n')
+
     ops = {'add': '+', 'sub': '-', 'and': '&', 'or': '|',
            'neg': '-', 'not': '!',
            'eq': 'JEQ', 'lt': 'JLT', 'gt': 'JGT'}
@@ -218,6 +226,7 @@ class Translator:
     def push(self, seg, idx):
         match seg:
             case Floating(base):
+                # microoptimize when idx = 0 or 1
                 load = (f'@{base} \n'
                          'D=M     \n'
                         f'@{idx}  \n'
@@ -237,6 +246,7 @@ class Translator:
     def pop(self, seg, idx):
         match seg:
             case Floating(base):
+                # microoptimize when idx = 0 or 1
                 return (f'@{base} \n'
                          'D=M     \n'
                         f'@{idx}  \n'
@@ -254,13 +264,13 @@ class Translator:
                          'M=D     \n')
 
     def unaryOp(self, op):
-        op = Translator.OPS[op]
+        op = Translator.ops[op]
         return (f'@SP     \n'
                  'A=M-1   \n'
                 f'M={op}M \n')
 
     def binaryOp(self, op):
-        op = Translator.OPS[op]
+        op = Translator.ops[op]
         if op == '-':
             action = 'M=M-D     \n'
         else:
@@ -288,7 +298,7 @@ class Translator:
                 f'({label}) \n')
 
     def makeLabel(self, symbol):
-        return f'{self.module}.{self.funcname}${symbol}'
+        return f'{self.funcname}${symbol}'
     
     def label(self, symbol):
         return f'({self.makeLabel(symbol)}) \n'
@@ -309,93 +319,134 @@ class Translator:
     def function(self, name, nArgs):
         self.funcname = name
         self.next_ret = 0
-        label = f'{self.module}.{self.funcname}'
-        insts = f'({label}) \n'
-        if nArgs > 0:
-            insts = ''.join(insts,
-                            '@SP  \n',
-                            'A=M  \n',
-                            'M=0\nA=A+1\n' * nArgs,
-                            'D=A  \n',
-                            '@SP  \n',
-                            'M=D  \n')
+        insts = (f'({self.funcname}) \n' +
+                 ('@SP   \n'
+                  'M=M+1 \n'
+                  'A=M-1 \n'
+                  'M=0   \n') * nArgs)
+        # microoptimization: M=0/A=A+1 nArgs times then set SP
         return insts
 
     def call(self, name, nArgs):
         self.next_ret = self.next_ret + 1
         ret = self.makeLabel(f'ret.{self.next_ret}')
-        f'''
-        @{ret}
-        D=A
-        @SP
-        M=M+1
-        A=M-1
-        M=D
-        @LCL
-        D=M
-        @SP
-        M=M+1
-        A=M-1
-        M=D
-        @ARG
-        D=M
-        @SP
-        M=M+1
-        A=M-1
-        M=D
-        @THIS
-        D=M
-        @SP
-        M=M+1
-        A=M-1
-        M=D
-        @THAT
-        D=M
-        @SP
-        M=M+1
-        A=M-1
-        M=D
-        D=A
-        @{4+nArgs}
-        D=D-A
-        @ARG
-        M=D
-        @SP
-        D=M
-        @LCL
-        M=D
-        @{name}
-        0;JMP
-        ({ret})
-        '''
+        return (f'@{ret}     \n'
+                 'D=A        \n'
+                 '@SP        \n'
+                 'M=M+1      \n'
+                 'A=M-1      \n'
+                 'M=D        \n'
+                 '@LCL       \n'
+                 'D=M        \n'
+                 '@SP        \n'
+                 'M=M+1      \n'
+                 'A=M-1      \n'
+                 'M=D        \n'
+                 '@ARG       \n'
+                 'D=M        \n'
+                 '@SP        \n'
+                 'M=M+1      \n'
+                 'A=M-1      \n'
+                 'M=D        \n'
+                 '@THIS      \n'
+                 'D=M        \n'
+                 '@SP        \n'
+                 'M=M+1      \n'
+                 'A=M-1      \n'
+                 'M=D        \n'
+                 '@THAT      \n'
+                 'D=M        \n'
+                 '@SP        \n'
+                 'M=M+1      \n'
+                 'A=M-1      \n'
+                 'M=D        \n'
+                 'D=A        \n'
+                f'@{4+nArgs} \n'
+                 'D=D-A      \n'
+                 '@ARG       \n'
+                 'M=D        \n'
+                 '@SP        \n'
+                 'D=M        \n'
+                 '@LCL       \n'
+                 'M=D        \n'
+                f'@{name}    \n'
+                 '0;JMP      \n'
+                f'({ret})    \n')
 
     def ret(self):
-        pass
+        return ('@LCL   \n'
+                'D=M    \n'
+                '@R13   \n'
+                'M=D    \n'
+                '@5     \n'
+                'A=D-A  \n'
+                'D=M    \n'
+                '@R14   \n'
+                'M=D    \n'
+                '@SP    \n'
+                'A=M-1  \n'
+                'D=M    \n'
+                '@ARG   \n'
+                'A=M    \n'
+                'M=D    \n'
+                'D=A    \n'
+                '@SP    \n'
+                'M=D+1  \n'
+                '@R13   \n'
+                'AM=M-1 \n'
+                'D=M    \n'
+                '@THAT  \n'
+                'M=D    \n'
+                '@R13   \n'
+                'AM=M-1 \n'
+                'D=M    \n'
+                '@THIS  \n'
+                'M=D    \n'
+                '@R13   \n'
+                'AM=M-1 \n'
+                'D=M    \n'
+                '@ARG   \n'
+                'M=D    \n'
+                '@R13   \n'
+                'AM=M-1 \n'
+                'D=M    \n'
+                '@LCL   \n'
+                'M=D    \n'
+                '@R14   \n'
+                'A=M    \n'
+                '0;JMP  \n')
 
 def main():
-    usage = f'usage: {sys.argv[0]} input_file.vm'
+    usage = f'usage: {sys.argv[0]} [input_file.vm | input_dir]'
     args = sys.argv[1:]
     if not args or len(args) > 1:
         return usage
-    vm = args[0]
-    if vm.endswith('.vm'):
-        module = Path(vm).stem
-        asm = vm[:-3] + '.asm'
+    
+    vm = Path(args[0])
+    if vm.is_dir():
+        files = vm.glob('*.vm')
+        asm = vm.joinpath(vm.name).with_suffix('.asm')
+    elif vm.suffix == '.vm':
+        files = [vm]
+        asm = vm.with_suffix('.asm')
     else:
         return usage
 
-    with tempfile.NamedTemporaryFile(mode='wt', dir=os.getcwd(), delete=False) as of:
-        with open(vm) as f:
-            p = Parser(module, f.readlines())
-        t = Translator(p)
-        try:
+    of = tempfile.NamedTemporaryFile(mode='wt', dir=os.getcwd(), delete=False)
+    try:
+        of.writelines(Translator.bootstrap)
+        for vm in files:
+            module = vm.stem
+            with open(vm) as f:
+                p = Parser(module, f.readlines())
+            t = Translator(p)
             of.writelines(t.translate())
-        except Exception as err:
-            of.close()
-            os.remove(of.name)
-            return str(err)
+    except Exception as err:
         of.close()
-        shutil.move(of.name, asm)
-
+        os.remove(of.name)
+        return str(err)
+    of.close()
+    shutil.move(of.name, asm)
+    
 if __name__ == '__main__':
     sys.exit(main())
