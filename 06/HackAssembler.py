@@ -61,14 +61,15 @@ class Parser:
             return ''.join(line.split('//')[0].split())
             
         with open(filename) as f:
-            self.lines = [line for l in f.readlines()
-                          if (line := strip(l)) != '']
+            self.lines = [strip(l) for l in f.readlines()]                          
             
     def parse(self):
         lineno = 0
         while self.lines:
             lineno = lineno + 1
             line = self.lines.pop(0)
+            if not line:
+                continue
             inst = None
             match line[0]:
                 case '(':

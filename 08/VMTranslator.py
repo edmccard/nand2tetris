@@ -70,9 +70,10 @@ class Parser:
 
     def parse(self):
         filename = self.module + ".vm"
-        lines = [line for l in self.lines
-                 if (line := l.split('//')[0].strip()) != '']
+        lines = [l.split('//')[0].strip()) for l in self.lines]
         for lineno, line in enumerate(lines):
+            if not line:
+                continue
             line = line.split()
             inst = Error('unknown instruction')
             op, args = line[0], line[1:]

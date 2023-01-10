@@ -49,9 +49,10 @@ class Parser:
     @staticmethod
     def parse(module, lines):
         filename = module + ".vm"
-        lines = [line for l in lines
-                 if (line := l.split('//')[0].strip()) != '']
+        lines = [l.split('//')[0].strip()) for l in lines]
         for lineno, line in enumerate(lines):
+            if not line:
+                continue
             line = line.split()
             inst = Error('unknown instruction')
             op, args = line[0], line[1:]
