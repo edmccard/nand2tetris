@@ -105,13 +105,8 @@ def test_xml(tokens):
         f.write('<tokens>\n')
         for token in tokens:
             ty = token[0].value
-            if token[2] == '>':
-                txt = '&gt;'
-            elif token[2] == '<':
-                txt = '&lt;'
-            elif token[2] == '&':
-                txt = '&amp;'
-            else:
-                txt = token[2]
+            txt = token[2].replace('&', '&amp;')
+            txt = txt.replace('<', '&lt;')
+            txt = txt.replace('>', '&gt;')
             f.write(f'<{ty}> {txt} </{ty}>\n')
         f.write('</tokens>\n')
