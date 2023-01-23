@@ -256,7 +256,11 @@ class Translator:
             case Floating(base):
                 # microoptimize when idx = 0 or 1
                 load = (
-                    f"@{base} \n" "D=M     \n" f"@{idx}  \n" "A=D+A   \n" "D=M     \n"
+                    f"@{base} \n"
+                    "D=M     \n"
+                    f"@{idx}  \n"
+                    "A=D+A   \n"
+                    "D=M     \n"
                 )
             case Fixed():
                 load = f"@{idx}  \n" "D=M     \n"
@@ -281,7 +285,11 @@ class Translator:
                 )
             case Fixed():
                 return (
-                    f"@SP     \n" "AM=M-1  \n" "D=M     \n" f"@{idx}  \n" "M=D     \n"
+                    f"@SP     \n"
+                    "AM=M-1  \n"
+                    "D=M     \n"
+                    f"@{idx}  \n"
+                    "M=D     \n"
                 )
 
     def unaryOp(self, op):
@@ -327,7 +335,13 @@ class Translator:
 
     def ifGoto(self, symbol):
         label = self.makeLabel(symbol)
-        return f"@SP      \n" "AM=M-1   \n" "D=M      \n" f"@{label} \n" "D;JNE    \n"
+        return (
+            f"@SP      \n"
+            "AM=M-1   \n"
+            "D=M      \n"
+            f"@{label} \n"
+            "D;JNE    \n"
+        )
 
     def function(self, name, nArgs):
         self.funcname = name

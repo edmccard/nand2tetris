@@ -173,7 +173,11 @@ class Translator:
         match seg:
             case Floating(base):
                 load = (
-                    f"@{base} \n" "D=M     \n" f"@{idx}  \n" "A=D+A   \n" "D=M     \n"
+                    f"@{base} \n"
+                    "D=M     \n"
+                    f"@{idx}  \n"
+                    "A=D+A   \n"
+                    "D=M     \n"
                 )
             case Fixed():
                 load = f"@{idx}  \n" "D=M     \n"
@@ -252,7 +256,9 @@ def main():
     else:
         return usage
 
-    with tempfile.NamedTemporaryFile(mode="wt", dir=os.getcwd(), delete=False) as of:
+    with tempfile.NamedTemporaryFile(
+        mode="wt", dir=os.getcwd(), delete=False
+    ) as of:
         with open(vm) as f:
             p = Parser.parse(module, f.readlines())
         try:
