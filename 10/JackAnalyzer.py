@@ -40,7 +40,7 @@ class Analyzer:
     def _(self, node: Class) -> None:
         self.open_tag("class")
         self.tag("keyword", "class")
-        self.tag("identifier", node.name)
+        self.tag("identifier", node.name.value)
         self.tag("symbol", "{")
 
         for cvar in node.cvars:
@@ -58,10 +58,10 @@ class Analyzer:
                 self.tag("identifier", node.ty.value)
             case Tok():
                 self.tag("keyword", node.ty.value)
-        self.tag("identifier", node.names[0])
+        self.tag("identifier", node.names[0].value)
         for name in node.names[1:]:
             self.tag("symbol", ",")
-            self.tag("identifier", name)
+            self.tag("identifier", name.value)
 
     @analyze.register
     def _(self, node: ClassVar) -> None:

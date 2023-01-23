@@ -10,20 +10,20 @@ class Name(NamedTuple):
     line: int
 
     @staticmethod
-    def fromTok(tok: Token) -> "Name":
+    def from_tok(tok: Token) -> "Name":
         return Name(tok.txt, tok.lno)
 
     @staticmethod
     def get_type(tok: Token) -> "Name | Tok":
         if tok.tok is Tok.ID:
-            return Name.fromTok(tok)
+            return Name.from_tok(tok)
         else:
             return tok.tok
 
 
 class Decl(NamedTuple):
     ty: Name | Tok
-    names: list[str]
+    names: list[Name]
 
 
 class Call(NamedTuple):
@@ -57,13 +57,13 @@ class Program:
 
 class Class(NamedTuple):
     module: str
-    name: str
+    name: Name
     cvars: "list[ClassVar]"
     subs: "list[Subroutine]"
 
     @staticmethod
     def parse(p: Parser, module: str) -> "Class":
-        name = p.expect(Tok.ID).txt
+        name = Name.from_tok(p.expect(Tok.ID))
         cvars: "list[ClassVar]" = []
         subs: "list[Subroutine]" = []
         p.expect(Tok.LC)
@@ -83,9 +83,9 @@ class ClassVar(NamedTuple):
     def parse(p: Parser) -> "ClassVar":
         scope = p.read().tok
         ty = Name.get_type(p.expect(*p.TYPES, "type"))
-        names = [(p.expect(Tok.ID).txt)]
+        names = [Name.from_tok(p.expect(Tok.ID))]
         while p.maybe(Tok.COMMA):
-            names.append(p.expect(Tok.ID).txt)
+            names.append(Name.from_tok(p.expect(Tok.ID)))
         p.expect(Tok.SEMI)
         return ClassVar(scope, Decl(ty, names))
 
@@ -101,25 +101,29 @@ class Subroutine(NamedTuple):
     def parse(p: Parser) -> "Subroutine":
         mtype = p.read().tok
         tok = p.expect(Tok.VOID, *p.TYPES, "type")
-        decl = Decl(Name.get_type(tok), [p.expect(Tok.ID).txt])
+        decl = Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))])
 
         p.expect(Tok.LP)
         args: list[Decl] = []
         if not p.maybe(Tok.RP):
             tok = p.expect(*p.TYPES, "type")
-            args.append(Decl(Name.get_type(tok), [p.expect(Tok.ID).txt]))
+            args.append(
+                Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))])
+            )
             while p.maybe(Tok.COMMA):
                 tok = p.expect(*p.TYPES, "type")
-                args.append(Decl(Name.get_type(tok), [p.expect(Tok.ID).txt]))
+                args.append(
+                    Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))])
+                )
             p.expect(Tok.RP)
 
         p.expect(Tok.LC)
         locs: list[Decl] = []
         while p.maybe(Tok.VAR):
             ty = Name.get_type(p.expect(*p.TYPES, "type"))
-            names = [p.expect(Tok.ID).txt]
+            names = [Name.from_tok(p.expect(Tok.ID))]
             while p.maybe(Tok.COMMA):
-                names.append(p.expect(Tok.ID).txt)
+                names.append(Name.from_tok(p.expect(Tok.ID)))
             p.expect(Tok.SEMI)
             locs.append(Decl(ty, names))
 
@@ -159,7 +163,7 @@ class LetStmt(NamedTuple):
 
     @staticmethod
     def parse(p: Parser) -> "LetStmt":
-        name = Name.fromTok(p.expect(Tok.ID))
+        name = Name.from_tok(p.expect(Tok.ID))
         if p.maybe(Tok.LB):
             idx = Expr.parse(p)
             p.expect(Tok.RB)
@@ -231,15 +235,22 @@ class RetStmt(NamedTuple):
         return RetStmt(expr)
 
 
+Statement.register(LetStmt)
+Statement.register(DoStmt)
+Statement.register(IfStmt)
+Statement.register(WhileStmt)
+Statement.register(RetStmt)
+
+
 class Var(NamedTuple):
     name: Name
 
     @staticmethod
     def parse(p: Parser, is_call: bool) -> "Var":
-        names = [Name.fromTok(p.expect(Tok.ID))]
+        names = [Name.from_tok(p.expect(Tok.ID))]
         if p.maybe(Tok.DOT):
             is_call = True
-            names.append(Name.fromTok(p.expect(Tok.ID)))
+            names.append(Name.from_tok(p.expect(Tok.ID)))
         if is_call:
             params: "list[Expr]" = []
             p.expect(Tok.LP)
