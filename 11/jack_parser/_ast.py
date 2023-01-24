@@ -25,6 +25,14 @@ class Decl(NamedTuple):
     ty: Name | Tok
     names: list[Name]
 
+    def class_name(self) -> Name | None:
+        if isinstance(self.ty, Name):
+            return self.ty
+
+    def builtin_name(self) -> str | None:
+        if isinstance(self.ty, Tok):
+            return self.ty.value
+
 
 class Call(NamedTuple):
     names: list[Name]
@@ -107,14 +115,10 @@ class Subroutine(NamedTuple):
         args: list[Decl] = []
         if not p.maybe(Tok.RP):
             tok = p.expect(*p.TYPES, "type")
-            args.append(
-                Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))])
-            )
+            args.append(Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))]))
             while p.maybe(Tok.COMMA):
                 tok = p.expect(*p.TYPES, "type")
-                args.append(
-                    Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))])
-                )
+                args.append(Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))]))
             p.expect(Tok.RP)
 
         p.expect(Tok.LC)

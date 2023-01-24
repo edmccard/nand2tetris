@@ -8,6 +8,10 @@ def redef_error(name: Name) -> ParseError:
     return ParseError(f"line {name.line}: {name.value} redefined")
 
 
+def undef_error(name: Name) -> ParseError:
+    return ParseError(f"line {name.line}: {name.value} undefined")
+
+
 class SubSym(NamedTuple):
     cm_names: dict[str, int]
     im_names: dict[str, int]
@@ -17,6 +21,11 @@ class SubSym(NamedTuple):
             self.cm_names.items() >= other.cm_names.items()
             and self.im_names.items() >= other.im_names.items()
         )
+
+
+class VarSym(NamedTuple):
+    ty: str
+    code: str
 
 
 class SymTable:
@@ -86,6 +95,8 @@ class SymTable:
     def __init__(self):
         self.subs: dict[str, SubSym] = {}
         self.class_name: str | None = None
+        self.cvars: dict[str, VarSym] | None = None
+        self.next_static: int = 0
 
     def add_subs(self, c: Class):
         name = c.name
@@ -109,6 +120,31 @@ class SymTable:
                 raise ParseError(f"{name.value} does not implement builtin")
         self.subs[name.value] = subsym
 
+    def get_type(self, decl: Decl) -> str:
+        if name := decl.builtin_name():
+            return name
+        name = decl.class_name()
+        if name.value in self.OS or name.value in self.subs:
+            return name.value
+        raise undef_error(name)
+
+    def add_cvars(self, c: Class):
+        cvars: dict[str, VarSym] = {}
+        next_field = 0
+        for cvar in c.cvars:
+            ty = self.get_type(cvar.decl)
+            for name in cvar.decl.names:
+                if name.value in cvars:
+                    raise redef_error(name)
+                if cvar.scope is Tok.STATIC:
+                    code = f"static {self.next_static}"
+                    self.next_static = self.next_static + 1
+                else:
+                    code = f"this {next_field}"
+                    next_field = next_field + 1
+            cvars[name.value] = VarSym(ty, code)
+        self.cvars = cvars
+
     def check_call(self, call: Call):
         pass
 
@@ -124,29 +160,37 @@ class Generator:
 
     @generate.register
     def _(self, node: Program) -> None:
-        for c in node.classes:
-            try:
+        try:
+            for c in node.classes:
                 self.syms.add_subs(c)
-            except ParseError as e:
-                raise ParseError(f"module {c.module}: {e}") from e
-
-        for c in node.classes:
-            self.generate(c)
+            for c in node.classes:
+                self.generate(c)
+        except ParseError as e:
+            raise ParseError(f"module {c.module}: {e}") from e
 
     @generate.register
     def _(self, node: Class) -> None:
         self.syms.class_name = node.name.value
+        self.syms.add_cvars(node)
+        for sub in node.subs:
+            self.generate(sub)
+
+    @generate.register
+    def _(self, node: Subroutine) -> None:
+        pass
 
 
-def test(filename):
+def test(dirname):
     from pathlib import Path
 
-    p = Path(filename)
-    with open(p) as f:
-        lines = f.readlines()
-    module = p.stem
+    p = Path(dirname)
     prog = Program()
-    prog.parse_module(module, lines)
+    files = p.glob("*.jack")
+    for file in files:
+        with open(file) as f:
+            lines = f.readlines()
+        module = file.stem
+        prog.parse_module(module, lines)
     g = Generator()
     g.generate(prog)
     return (prog, g)
