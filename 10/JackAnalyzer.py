@@ -6,7 +6,7 @@ import sys
 
 class Analyzer:
     def __init__(self, f: TextIO = None):
-        self.f: TextIO = f
+        self.f: TextIO = f or sys.stdout
         self.indent: int = 0
         self.in_term: bool = False
 
