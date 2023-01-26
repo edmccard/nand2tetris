@@ -12,6 +12,12 @@ def undef_error(name: Name) -> ParseError:
     return ParseError(f"line {name.line}: {name.value} undefined")
 
 
+def array_error(name: Name) -> ParseError:
+    return ParseError(
+        f"line {name.line}: cannot subscript builtin {name.value}"
+    )
+
+
 class SubSym(NamedTuple):
     cm_names: dict[str, int]
     im_names: dict[str, int]
@@ -26,6 +32,17 @@ class SubSym(NamedTuple):
 class VarSym(NamedTuple):
     ty: str
     code: str
+
+
+class VarCode:
+    def __init__(self, segment: str):
+        self.segment: str = segment
+        self.count = 0
+
+    def next(self) -> str:
+        code = f"{self.segment} {self.count}"
+        self.count = self.count + 1
+        return code
 
 
 class SymTable:
@@ -96,7 +113,24 @@ class SymTable:
         self.subs: dict[str, SubSym] = {}
         self.class_name: str | None = None
         self.cvars: dict[str, VarSym] | None = None
-        self.next_static: int = 0
+        self.static_code: VarCode = VarCode("static")
+        self.field_code: VarCode | None = None
+        self.fvars: dict[str, VarSym] | None = None
+        self.arg_code: VarCode | None = None
+        self.loc_code: VarCode | None = None
+
+    def var_code(self, name: Name) -> VarSym:
+        if sym := self.fvars.get(name.value, None):
+            return sym.code
+        if sym := self.cvars.get(name.value, None):
+            return sym.code
+        raise undef_error(name)
+
+    def arr_code(self, name: Name) -> VarSym:
+        sym = self.var_code(name)
+        if sym.ty == "<builtin>":
+            raise array_error(name)
+        return sym
 
     def add_subs(self, c: Class):
         name = c.name
@@ -122,28 +156,46 @@ class SymTable:
 
     def get_type(self, decl: Decl) -> str:
         if name := decl.builtin_name():
-            return name
+            return "<builtin>"
         name = decl.class_name()
         if name.value in self.OS or name.value in self.subs:
             return name.value
         raise undef_error(name)
 
-    def add_cvars(self, c: Class):
+    def add_cvars(self, c: Class) -> None:
+        self.field_code = VarCode("this")
         cvars: dict[str, VarSym] = {}
-        next_field = 0
         for cvar in c.cvars:
             ty = self.get_type(cvar.decl)
             for name in cvar.decl.names:
                 if name.value in cvars:
                     raise redef_error(name)
                 if cvar.scope is Tok.STATIC:
-                    code = f"static {self.next_static}"
-                    self.next_static = self.next_static + 1
+                    code = self.static_code.next()
                 else:
-                    code = f"this {next_field}"
-                    next_field = next_field + 1
-            cvars[name.value] = VarSym(ty, code)
+                    code = self.field_code.next()
+                cvars[name.value] = VarSym(ty, code)
         self.cvars = cvars
+
+    def add_fvars(self, s: Subroutine) -> None:
+        self.arg_code = VarCode("argument")
+        if s.mtype is Tok.METHOD:
+            self.arg_code.next()
+        self.loc_code = VarCode("local")
+        fvars: dict[str, VarSym] = {}
+        for arg in s.args:
+            ty = self.get_type(arg)
+            name = arg.names[0]
+            if name.value in fvars:
+                raise redef_error(name)
+            fvars[name.value] = VarSym(ty, self.arg_code.next())
+        for loc in s.locs:
+            ty = self.get_type(loc)
+            for name in loc.names:
+                if name.value in fvars:
+                    raise redef_error(name)
+                fvars[name.value] = VarSym(ty, self.loc_code.next())
+        self.fvars = fvars
 
     def check_call(self, call: Call):
         pass
@@ -153,31 +205,81 @@ class Generator:
     def __init__(self, f: TextIO = None):
         self.f: TextIO = f or sys.stdout
         self.syms: SymTable = SymTable()
+        self.label_id: int | None = None
 
-    @singledispatchmethod
-    def generate(self, node) -> None:
-        raise NotImplementedError(f"Cannot generate {type(node)}")
-
-    @generate.register
-    def _(self, node: Program) -> None:
+    def generate(self, node: Program) -> None:
         try:
             for c in node.classes:
                 self.syms.add_subs(c)
             for c in node.classes:
-                self.generate(c)
+                self.generate_class(c)
         except ParseError as e:
             raise ParseError(f"module {c.module}: {e}") from e
 
-    @generate.register
-    def _(self, node: Class) -> None:
+    def generate_class(self, node: Class) -> None:
         self.syms.class_name = node.name.value
         self.syms.add_cvars(node)
         for sub in node.subs:
-            self.generate(sub)
+            self.generate_sub(sub)
 
-    @generate.register
-    def _(self, node: Subroutine) -> None:
+    def generate_sub(self, node: Subroutine) -> None:
+        self.syms.add_fvars(node)
+        self.label_id = 0
+        for stmt in node.stmts:
+            self.generate_stmt(stmt)
+
+    @singledispatchmethod
+    def generate_stmt(self, stmt) -> None:
+        raise NotImplementedError(f"cannot generate statement {type(stmt)}")
+
+    @generate_stmt.register
+    def _(self, node: LetStmt) -> None:
+        self.generate_assignment(node.lvalue, node.expr)
+
+    @generate_stmt.register
+    def _(self, node: DoStmt) -> None:
         pass
+
+    @generate_stmt.register
+    def _(self, node: WhileStmt) -> None:
+        pass
+
+    @generate_stmt.register
+    def _(self, node: IfStmt) -> None:
+        pass
+
+    @generate_stmt.register
+    def _(self, node: RetStmt) -> None:
+        if not node.expr:
+            self.cmd("push constant 0")
+        else:
+            self.generate_expr(node.expr)
+
+    @singledispatchmethod
+    def generate_assignment(self, lvalue, expr) -> None:
+        raise NotImplementedError(f"cannot generate lvalue {type(lvalue)}")
+
+    @generate_assignment.register
+    def _(self, lvalue: Var, expr: Expr) -> None:
+        sym = self.syms.var_code(lvalue.name)
+        self.generate_expr(expr)
+        self.write(f"pop {sym.code}")
+
+    @generate_assignment.register
+    def _(self, lvalue: Subscript, expr: Expr) -> None:
+        sym = self.syms.arr_code(lvalue.name)
+        self.generate_expr(expr)
+        self.write(f"push {sym.code}")
+        self.generate_expr(lvalue.idx)
+        self.write("add")
+        self.write("pop pointer 1")
+        self.write("pop that 0")
+
+    def generate_expr(self, expr: Expr) -> None:
+        pass
+
+    def write(self, cmd: str) -> None:
+        self.f.write(f"{cmd}\n")
 
 
 def test(dirname):
