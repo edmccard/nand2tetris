@@ -111,19 +111,23 @@ class SymTable:
 
     def __init__(self):
         self.subs: dict[str, SubSym] = {}
+
         self.class_name: str | None = None
         self.cvars: dict[str, VarSym] | None = None
         self.static_code: VarCode = VarCode("static")
         self.field_code: VarCode | None = None
+
+        self.func_name: str | None = None
         self.fvars: dict[str, VarSym] | None = None
         self.arg_code: VarCode | None = None
         self.loc_code: VarCode | None = None
+        self.label_id: int | None = None
 
     def var_code(self, name: Name) -> VarSym:
         if sym := self.fvars.get(name.value, None):
-            return sym.code
+            return sym
         if sym := self.cvars.get(name.value, None):
-            return sym.code
+            return sym
         raise undef_error(name)
 
     def arr_code(self, name: Name) -> VarSym:
@@ -131,6 +135,14 @@ class SymTable:
         if sym.ty == "<builtin>":
             raise array_error(name)
         return sym
+
+    def label(self, suffix: str | None = None) -> str:
+        lbl = f"{self.class_name}.{self.func_name}"
+        if suffix:
+            self.label_id = self.label_id + 1
+            return f"{lbl}.{suffix}${self.label_id}"
+        else:
+            return lbl
 
     def add_subs(self, c: Class):
         name = c.name
@@ -162,7 +174,8 @@ class SymTable:
             return name.value
         raise undef_error(name)
 
-    def add_cvars(self, c: Class) -> None:
+    def add_class(self, c: Class) -> None:
+        self.class_name = c.name.value
         self.field_code = VarCode("this")
         cvars: dict[str, VarSym] = {}
         for cvar in c.cvars:
@@ -177,7 +190,8 @@ class SymTable:
                 cvars[name.value] = VarSym(ty, code)
         self.cvars = cvars
 
-    def add_fvars(self, s: Subroutine) -> None:
+    def add_sub(self, s: Subroutine) -> None:
+        self.func_name = s.decl.names[0]
         self.arg_code = VarCode("argument")
         if s.mtype is Tok.METHOD:
             self.arg_code.next()
@@ -205,7 +219,6 @@ class Generator:
     def __init__(self, f: TextIO = None):
         self.f: TextIO = f or sys.stdout
         self.syms: SymTable = SymTable()
-        self.label_id: int | None = None
 
     def generate(self, node: Program) -> None:
         try:
@@ -217,14 +230,13 @@ class Generator:
             raise ParseError(f"module {c.module}: {e}") from e
 
     def generate_class(self, node: Class) -> None:
-        self.syms.class_name = node.name.value
-        self.syms.add_cvars(node)
+        self.syms.add_class(node)
         for sub in node.subs:
             self.generate_sub(sub)
 
     def generate_sub(self, node: Subroutine) -> None:
-        self.syms.add_fvars(node)
-        self.label_id = 0
+        self.syms.add_sub(node)
+        # TODO label, locals, etc
         for stmt in node.stmts:
             self.generate_stmt(stmt)
 
@@ -234,7 +246,19 @@ class Generator:
 
     @generate_stmt.register
     def _(self, node: LetStmt) -> None:
-        self.generate_assignment(node.lvalue, node.expr)
+        match node.lvalue:
+            case Var(name):
+                sym = self.syms.var_code(name)
+                self.generate_expr(node.expr)
+                self.write(f"pop {sym.code}")
+            case Subscript(name, idx):
+                sym = self.syms.arr_code(name)
+                self.generate_expr(node.expr)
+                self.write(f"push {sym.code}")
+                self.generate_expr(idx)
+                self.write("add")
+                self.write("pop pointer 1")
+                self.write("pop that 0")
 
     @generate_stmt.register
     def _(self, node: DoStmt) -> None:
@@ -242,44 +266,43 @@ class Generator:
 
     @generate_stmt.register
     def _(self, node: WhileStmt) -> None:
-        pass
+        lbl = self.syms.label("while")
+        self.write(f"label {lbl}_check")
+        self.generate_expr(node.expr)
+        self.write(f"if-goto {lbl}_do")
+        self.write(f"goto {lbl}_done")
+        for stmt in node.stmts:
+            self.generate_stmt(stmt)
+        self.write(f"goto {lbl}_check")
+        self.write(f"label {lbl}_done")
 
     @generate_stmt.register
     def _(self, node: IfStmt) -> None:
-        pass
+        lbl = self.syms.label("if")
+        self.generate_expr(node.expr)
+        self.write(f"if-goto {lbl}_true")
+        if node.false:
+            for stmt in node.false:
+                self.generate_stmt(stmt)
+        self.write(f"goto {lbl}_done")
+        self.write(f"label {lbl}_true")
+        for stmt in node.true:
+            self.generate_stmt(stmt)
+        self.write(f"label {lbl}_done")
 
     @generate_stmt.register
     def _(self, node: RetStmt) -> None:
         if not node.expr:
-            self.cmd("push constant 0")
+            self.write("push constant 0")
         else:
             self.generate_expr(node.expr)
-
-    @singledispatchmethod
-    def generate_assignment(self, lvalue, expr) -> None:
-        raise NotImplementedError(f"cannot generate lvalue {type(lvalue)}")
-
-    @generate_assignment.register
-    def _(self, lvalue: Var, expr: Expr) -> None:
-        sym = self.syms.var_code(lvalue.name)
-        self.generate_expr(expr)
-        self.write(f"pop {sym.code}")
-
-    @generate_assignment.register
-    def _(self, lvalue: Subscript, expr: Expr) -> None:
-        sym = self.syms.arr_code(lvalue.name)
-        self.generate_expr(expr)
-        self.write(f"push {sym.code}")
-        self.generate_expr(lvalue.idx)
-        self.write("add")
-        self.write("pop pointer 1")
-        self.write("pop that 0")
 
     def generate_expr(self, expr: Expr) -> None:
         pass
 
     def write(self, cmd: str) -> None:
-        self.f.write(f"{cmd}\n")
+        # self.f.write(f"{cmd}\n")
+        pass
 
 
 def test(dirname):
