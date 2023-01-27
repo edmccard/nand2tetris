@@ -13,9 +13,7 @@ def undef_error(name: Name) -> ParseError:
 
 
 def array_error(name: Name) -> ParseError:
-    return ParseError(
-        f"line {name.line}: cannot subscript builtin {name.value}"
-    )
+    return ParseError(f"line {name.line}: cannot subscript builtin {name.value}")
 
 
 class SubSym(NamedTuple):
@@ -190,6 +188,9 @@ class SymTable:
                 cvars[name.value] = VarSym(ty, code)
         self.cvars = cvars
 
+    def field_count(self):
+        return self.field_code.count
+
     def add_sub(self, s: Subroutine) -> None:
         self.func_name = s.decl.names[0]
         self.arg_code = VarCode("argument")
@@ -236,7 +237,15 @@ class Generator:
 
     def generate_sub(self, node: Subroutine) -> None:
         self.syms.add_sub(node)
-        # TODO label, locals, etc
+        # TODO: if ctor, return type must be classname
+        self.write(f"function {self.syms.label()} {len(node.locs)}")
+        if node.mtype is Tok.METHOD:
+            self.write("push argument 0")
+            self.write("pop pointer 0")
+        elif node.mtype is Tok.CTOR:
+            self.write("push constant {self.syms.field_count()}")
+            self.write("call Memory.alloc 1")
+            self.write("pop pointer 0")
         for stmt in node.stmts:
             self.generate_stmt(stmt)
 
@@ -292,13 +301,17 @@ class Generator:
 
     @generate_stmt.register
     def _(self, node: RetStmt) -> None:
+        # TODO: void must have None expr
+        # TODO: constructor must return this or obj of right type
         if not node.expr:
             self.write("push constant 0")
         else:
             self.generate_expr(node.expr)
 
     def generate_expr(self, expr: Expr) -> None:
-        pass
+        self.generate_term(expr.terms[0])
+        for (term, op) in zip(expr.terms[1:], expr.ops):
+            pass
 
     def write(self, cmd: str) -> None:
         # self.f.write(f"{cmd}\n")
