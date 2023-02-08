@@ -103,7 +103,7 @@ class Subroutine(NamedTuple):
     decl: Decl
     args: list[Decl]
     locs: list[Decl]
-    stmts: Any
+    stmts: "list[Statement]"
 
     @staticmethod
     def parse(p: Parser) -> "Subroutine":
@@ -115,10 +115,14 @@ class Subroutine(NamedTuple):
         args: list[Decl] = []
         if not p.maybe(Tok.RP):
             tok = p.expect(*p.TYPES, "type")
-            args.append(Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))]))
+            args.append(
+                Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))])
+            )
             while p.maybe(Tok.COMMA):
                 tok = p.expect(*p.TYPES, "type")
-                args.append(Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))]))
+                args.append(
+                    Decl(Name.get_type(tok), [Name.from_tok(p.expect(Tok.ID))])
+                )
             p.expect(Tok.RP)
 
         p.expect(Tok.LC)
@@ -145,18 +149,20 @@ class _Statements:
     def parse(p: Parser) -> list[Statement]:
         stmts: list[Statement] = []
         while True:
-            if p.maybe(Tok.LET):
-                stmt = LetStmt.parse(p)
-            elif p.maybe(Tok.DO):
-                stmt = DoStmt.parse(p)
-            elif p.maybe(Tok.IF):
-                stmt = IfStmt.parse(p)
-            elif p.maybe(Tok.WHILE):
-                stmt = WhileStmt.parse(p)
-            elif p.maybe(Tok.RETURN):
-                stmt = RetStmt.parse(p)
-            else:
-                break
+            tok = p.current()
+            match tok.tok:
+                case Tok.LET:
+                    stmt = LetStmt.parse(p)
+                case Tok.DO:
+                    stmt = DoStmt.parse(p)
+                case Tok.IF:
+                    stmt = IfStmt.parse(p)
+                case Tok.WHILE:
+                    stmt = WhileStmt.parse(p)
+                case Tok.RETURN:
+                    stmt = RetStmt.parse(p)
+                case _:
+                    break
             stmts.append(stmt)
         return stmts
 
@@ -164,9 +170,11 @@ class _Statements:
 class LetStmt(NamedTuple):
     lvalue: "Subscript | Var"
     expr: "Expr"
+    lno: int
 
     @staticmethod
     def parse(p: Parser) -> "LetStmt":
+        lno = p.read().lno
         name = Name.from_tok(p.expect(Tok.ID))
         if p.maybe(Tok.LB):
             idx = Expr.parse(p)
@@ -178,26 +186,30 @@ class LetStmt(NamedTuple):
         p.expect(Tok.EQ)
         expr = Expr.parse(p)
         p.expect(Tok.SEMI)
-        return LetStmt(lvalue, expr)
+        return LetStmt(lvalue, expr, lno)
 
 
 class DoStmt(NamedTuple):
     call: Call
+    lno: int
 
     @staticmethod
     def parse(p: Parser) -> "DoStmt":
+        lno = p.read().lno
         call = Var.parse(p, True)
         p.expect(Tok.SEMI)
-        return DoStmt(call)
+        return DoStmt(call, lno)
 
 
 class IfStmt(NamedTuple):
     expr: "Expr"
     true: list[Statement]
     false: list[Statement] | None
+    lno: int
 
     @staticmethod
     def parse(p: Parser) -> "IfStmt":
+        lno = p.read().lno
         p.expect(Tok.LP)
         expr = Expr.parse(p)
         p.expect(Tok.RP)
@@ -209,34 +221,38 @@ class IfStmt(NamedTuple):
             p.expect(Tok.LC)
             false = _Statements.parse(p)
             p.expect(Tok.RC)
-        return IfStmt(expr, true, false)
+        return IfStmt(expr, true, false, lno)
 
 
 class WhileStmt(NamedTuple):
     expr: "Expr"
     stmts: list[Statement]
+    lno: int
 
     @staticmethod
     def parse(p: Parser) -> "WhileStmt":
+        lno = p.read().lno
         p.expect(Tok.LP)
         expr = Expr.parse(p)
         p.expect(Tok.RP)
         p.expect(Tok.LC)
         stmts = _Statements.parse(p)
         p.expect(Tok.RC)
-        return WhileStmt(expr, stmts)
+        return WhileStmt(expr, stmts, lno)
 
 
 class RetStmt(NamedTuple):
     expr: "Expr | None"
+    lno: int
 
     @staticmethod
     def parse(p: Parser) -> "RetStmt":
+        lno = p.read().lno
         expr = None
         if not p.maybe(Tok.SEMI):
             expr = Expr.parse(p)
             p.expect(Tok.SEMI)
-        return RetStmt(expr)
+        return RetStmt(expr, lno)
 
 
 Statement.register(LetStmt)
